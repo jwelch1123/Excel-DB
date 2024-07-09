@@ -11,7 +11,7 @@ class XLDB:
         db_path_dbname (Path): The path to the database file.
         db_dir (str): The directory where the database file is located.
         db_name (str): The name of the database file.
-        data_locations (list): A list of paths to data files.
+        source_locations (list): A list of paths to data files.
         con (sqlite3.Connection): The connection object for the SQLite database.
         cursor (sqlite3.Cursor): The cursor object for executing SQL queries.
 
@@ -32,7 +32,7 @@ class XLDB:
     db_path_dbname = Path
     db_dir = str
     db_name = str
-    data_locations = list
+    source_locations = list
     con = sqlite3.connect
     cursor = sqlite3.Cursor
 
@@ -63,13 +63,13 @@ class XLDB:
 
             if data_location is None: data_location = []
             if isinstance(data_location, (str,Path)): data_location = [data_location]
-            self.data_locations = [Path(dir) for dir in data_location]
+            self.source_locations = [Path(dir) for dir in data_location]
 
             self.con, self.cursor = self._create_database(self.db_name)
 
-            if self.data_locations:
+            if self.source_locations:
                 data = {}
-                for file in self.data_locations:
+                for file in self.source_locations:
                     file_path = Path(file)
                     data.update(self.read_tabular_data(file_path.absolute()))
                 self.add_data(data)
@@ -84,18 +84,22 @@ class XLDB:
         Returns:
             tuple: A tuple containing the connection and cursor objects.
         """
-        print(">  Creating database")
-        con = sqlite3.connect(db_name)
-        cur = con.cursor()
-        return con, cur
+        try:
+            con = sqlite3.connect(db_name)
+            cur = con.cursor()
+            return con, cur
+        except Exception as e:
+            raise Exception("Database not created due to exception: ", e)
 
     def _clear_db(self):
         """
         Clears the database by closing the connection and deleting the database file.
         """
-        print(">  Clearing database")
-        self.con.close()
-        Path(self.db_path_dbname).unlink()
+        try:
+            self.con.close()
+            Path(self.db_path_dbname).unlink()
+        except Exception as e:
+            raise Exception("Database not deleted due to exception: ", e)
 
     def read_tabular_data(self, file_path, **kwargs) -> dict:
         """
@@ -116,9 +120,6 @@ class XLDB:
         
         if not isinstance(file_path, Path):
             raise TypeError("File path should be a Path object")
-
-        print(">  Reading tabular data")
-        print(">    arguments: ", file_path, kwargs)
         
         try:
             if file_path.suffix == '.csv':
@@ -138,7 +139,7 @@ class XLDB:
 
             return data
         except Exception as e:
-            print(e)         
+            raise Exception("Data not read due to exception: ", e)        
 
     def _fetch_tables(self):
         """
@@ -147,11 +148,15 @@ class XLDB:
         Returns:
             A list of table names.
         """
-        table_list = "SELECT name FROM sqlite_master WHERE type='table';"
-        self.cursor.execute(table_list)
-        tables = [table[0] for table in self.cursor.fetchall()]
-        self.con.commit()
-        return tables
+        try:
+            table_list = "SELECT name FROM sqlite_master WHERE type='table';"
+            self.cursor.execute(table_list)
+            tables = [table[0] for table in self.cursor.fetchall()]
+            self.con.commit()
+            return tables
+        except Exception as e:
+            self.con.rollback()
+            raise Exception("Tables not fetched due to exception: ", e)
 
     def _fetch_columns(self, table_name:str):
         """
@@ -164,10 +169,15 @@ class XLDB:
             list: A list of column names.
 
         """
-        get_cols = f"PRAGMA table_info({table_name})"
-        self.cursor.execute(get_cols)
-        cols = [col[1] for col in self.cursor.fetchall()]
-        return cols
+        try:
+            get_cols = f"PRAGMA table_info({table_name})"
+            self.cursor.execute(get_cols)
+            cols = [col[1] for col in self.cursor.fetchall()]
+            self.con.commit()
+            return cols
+        except Exception as e:
+            self.con.rollback()
+            raise Exception("Columns not fetched due to exception: ", e)
 
     def _fetch_data(self, table_name:str):
         """
@@ -179,14 +189,20 @@ class XLDB:
         Returns:
             pandas.DataFrame: A DataFrame containing all the data from the specified table.
         """
-        cols = self._fetch_columns(table_name)
+        try:
+            cols = self._fetch_columns(table_name)
 
-        query_all = f"SELECT * FROM {table_name}"
-        self.cursor.execute(query_all)
-        data = self.cursor.fetchall()
+            query_all = f"SELECT * FROM {table_name}"
+            self.cursor.execute(query_all)
+            data = self.cursor.fetchall()
 
-        df = pd.DataFrame(data, columns=cols)
-        return df
+            df = pd.DataFrame(data, columns=cols)
+            self.con.commit()
+            return df
+        
+        except Exception as e:
+            self.con.rollback()
+            raise Exception("Data not fetched due to exception: ", e)
 
     def to_csv(self, dir:str=None, exclude:list=[], include_db_name:bool = True, close_delete:bool = True, **kwargs):
         """
@@ -227,13 +243,11 @@ class XLDB:
                 dir_db_file = f"{dir+'_' if dir else ''}{self.db_name+'_' if include_db_name else ''}{table_name}.csv"
 
                 df.to_csv(dir_db_file, **kwargs)
-                print("Data written to csv file at: ", dir_db_file)
 
             if close_delete:
                 self._clear_db()
 
         except Exception as e:
-            self.con.rollback()
             raise Exception("Data not written to csv files due to exception: ", e)
 
     def to_excel(self, dir:str=None, exclude:list=[], file_name:str = None, close_delete:bool = True, **kwargs):
@@ -261,23 +275,25 @@ class XLDB:
             raise TypeError("file_name argument should be a string")
         if not isinstance(close_delete, bool):
             raise TypeError("close_delete argument should be a boolean")
-            
-        if not file_name:
-            file_name = self.db_name
-
-        tables = [table for table in self._fetch_tables() if table not in exclude]
-
-        dir_db_file = f"{dir + '_' if dir else ''}{file_name}.xlsx"
-        writer = pd.ExcelWriter(dir_db_file)
         
-        for table_name in tables:
-            df = self._fetch_data(table_name)
-            df.to_excel(writer, sheet_name=table_name, index=False, **kwargs)
-        writer.close()
+        try:    
+            if not file_name:
+                file_name = self.db_name
 
-        if close_delete: self._clear_db()
+            tables = [table for table in self._fetch_tables() if table not in exclude]
+            dir_db_file = f"{dir + '_' if dir else ''}{file_name}.xlsx"
+            
+            writer = pd.ExcelWriter(dir_db_file)
+            
+            for table_name in tables:
+                df = self._fetch_data(table_name)
+                df.to_excel(writer, sheet_name=table_name, index=False, **kwargs)
+            writer.close()
 
-        print("Data written to excel file at: ", dir_db_file)
+            if close_delete: self._clear_db()
+        
+        except Exception as e:
+            raise Exception("Data not written to excel file due to exception: ", e)
 
     def _append_data(self, table_name:str, data:pd.DataFrame):
         """
@@ -302,8 +318,9 @@ class XLDB:
             data = data[target_cols]
 
             add_data = f"INSERT INTO {table_name} VALUES({', '.join(['?']*len(target_cols))})"
+
             self.cursor.executemany(add_data, [tuple(row) for row in data.values])
-            print(">    Data written to table: ", table_name)
+            self.con.commit()
 
         except Exception as e:
             self.con.rollback()
@@ -364,8 +381,8 @@ class XLDB:
 
                 self._append_data(table_name, df)
 
-            self.con.commit()   
-            print("Data written to database")
+            self.con.commit()  
+
         except Exception as e:
             self.con.rollback()
             raise Exception("Data not written to database due to exception: ", e)
@@ -410,6 +427,9 @@ if __name__ == '__main__':
     #db.add_data(data)
     #db.to_excel()
 
+
+
+
     # [X] rewrite __init__
     # [x] read csv/xls/xlsx file
     # [x] get the sheet/table names and data types
@@ -425,9 +445,9 @@ if __name__ == '__main__':
 
     # Polishing:
     # [] Redo tabluar data reading
-    # [] Make sure I am commiting after every write
-    # [] Try and except catches
-    # [] Type checks
-    # [] replace prints with raises
-    # [] abstract some of the query logic
+    # [X] Make sure I am commiting after every write
+    # [X] Try and except catches
+    # [X] Type checks
+    # [X] replace prints with raises
+    # [?] abstract some of the query logic
     # [] table and column name validation
