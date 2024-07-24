@@ -352,7 +352,7 @@ class XLDB:
         Returns:
             None
         """
-        if not isinstance(dir, str):
+        if dir and (not isinstance(dir, str)):
             raise TypeError("dir argument should be a string")
         if not isinstance(exclude, list):
             raise TypeError("exclude argument should be a list")
@@ -381,60 +381,72 @@ class XLDB:
             raise Exception("Data not written to excel file due to exception: ", e)
         
     def add_data(self, data_path: Union[str, Path, list], if_exists='fail', map: dict = None, **kwargs) -> None:
+        """
+        Add data to the database.
 
-        # need to differentiate between add and append.
+        Args:
+            data_path (Union[str, Path, list]): The path(s) to the data file(s) to be added.
+            if_exists (str, optional): Specifies how to behave if the table already exists. 
+                Possible values are 'fail', 'replace', and 'append'. Defaults to 'fail'.
+            map (dict, optional): A dictionary that maps table names to column names. 
+                Only columns specified in the map will be included in the database table.
+            **kwargs: Additional keyword arguments to be passed to the _parse_to_pd method.
 
+        Raises:
+            TypeError: If data_path is not a string, Path object, or a list of strings/Path objects.
+            TypeError: If if_exists is not one of 'fail', 'replace', or 'append'.
+            Exception: If an error occurs while writing the data to the database.
 
+        Returns:
+            None
+        """
         if data_path and (not all(isinstance(data, (str, Path)) for data in data_path)):
             raise TypeError("All data elements should be strings or Path objects")
         check_if_exists = ['fail', 'replace', 'append']
         if not if_exists in check_if_exists:
             raise TypeError(f"if_exists argument should be one of {check_if_exists}")
 
-
         try:
-            # package data_path(s) and add to source_locations
-            
-
-            # This isn't quite working the right way.
-            print(data_path)
             if isinstance(data_path, (str,Path)): 
                 data_path = [data_path]
-                print("invoked list embedding")
-            print(self.source_locations)
-            # Only need to do this is the file is not already in the source_locations
-            #self.source_locations.extend([Path(dir) for dir in data_path])
-            print(self.source_locations)
-
-            print("Add Data Checkpoint 1")
-            print('*'*50)   
             
-            print(data_path)
             for file in data_path:
+                if file not in self.source_locations:
+                    self.source_locations.append(file)
                 data_dict = self._parse_to_pd(file, **kwargs)
-                table_name = list(data_dict.keys())[0]
-                df = list(data_dict.values())[0]
 
-                # rename columns if map exists
-                if map and (table_name in map):
-                    columns = [map[table_name].get(col, col) for col in df.columns]
-                    df = df[columns]
+                print("Data Dict: ", data_dict.keys())
 
-                try:
-                    df.to_sql(table_name, self.con, if_exists=if_exists, index=False)
-                    self.con.commit()
-                except Exception as e:
-                    self.con.rollback()
-                    raise Exception("Table not written to database due to exception: ", e)
+                for table_name, df in data_dict.items():
+                    print(table_name, df.columns)
+                    if map and (table_name in map):
+                        columns = [map[table_name].get(col, col) for col in df.columns]
+                        df = df[columns]
+                        data_dict[table_name] = df
 
+                    try:
+                        df.to_sql(table_name, self.con, if_exists=if_exists, index=False)
+                        self.con.commit()
+                    except Exception as e:
+                        self.con.rollback()
+                        raise Exception("Table not written to database due to exception: ", e)
             self.con.commit()
 
         except Exception as e:
             self.con.rollback()
             raise Exception("Data not written to database due to exception: ", e)
             
+    def append_data(self, data_path: Union[str, Path, list]) -> None:
+        """
+        Appends data to the XLDB.
 
-        pass
+        Parameters:
+        - data_path: The path to the data file(s) to be appended. It can be a string, a Path object, or a list of paths.
+
+        Returns:
+        - None
+        """
+        self.add_data(data_path, if_exists='append')
 
     def old_add_data(self, data: dict, overwrite: bool = False, map: dict = None) -> None:
         """
@@ -549,26 +561,4 @@ if __name__ == '__main__':
 
     #db = XLDB(db_name_path='csv_test_db', data_location=['test_csv.csv'])
     db = XLDB(db_name_path='xlsx_test_db', data_location=['test_xlsx.xlsx'])
-
-    #print(db.query("SELECT * FROM test_csv limit 10"))
-    print(db.query("SELECT * FROM users limit 10"))
-    db.to_csv()
-    
-    #db = XLDB('xlsx_test_db')
-    #db = XLDB('simple_xlsx_test_db')
-    #db.add_data(data)
-    #db.to_excel()
-
-
-# https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.to_sql.html 
-
-    # Polishing:
-    # [X] Redo tabluar data reading
-    # [X] Make sure I am commiting after every write
-    # [X] Try and except catches
-    # [X] Type checks
-    # [X] replace prints with raises
-    # [?] abstract some of the query logic
-    # [X] table and column name validation
-    # [] Flow to add vs append data
-    # [X] saving db to location doesn't work.
+    # [] Strip Read Tabular data and Old add data functions
