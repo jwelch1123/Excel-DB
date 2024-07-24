@@ -1,6 +1,7 @@
 import sqlite3
 from pathlib import Path
 import pandas as pd
+from typing import Union
 
 
 class XLDB:
@@ -25,7 +26,6 @@ class XLDB:
         _fetch_data: Fetches all data from the specified table and returns it as a pandas DataFrame.
         to_csv: Writes the data from the database tables to CSV files.
         to_excel: Writes the data from the database tables to an Excel file.
-        _append_data: Appends data to a specified table in the database.
         add_data: Adds data to the database tables.
     """
 
@@ -36,7 +36,7 @@ class XLDB:
     con = sqlite3.connect
     cursor = sqlite3.Cursor
 
-    def __init__(self, path_dbname:str|Path, data_location:str|Path|list = None):
+    def __init__(self, db_name_path: Union[str, Path], data_location:Union[str,Path,list] = None):
             """
             Initialize the XLDB object.
 
@@ -49,32 +49,39 @@ class XLDB:
                 TypeError: If any of the data locations are not strings or Path objects.
             """
 
-            if not isinstance(path_dbname, (str, Path)):
+            if not isinstance(db_name_path, (str, Path)):
                 raise TypeError("Database path should be a string or Path object")
             if data_location and (not all(isinstance(data, (str, Path)) for data in data_location)):
                 raise TypeError("All data elements should be strings or Path objects")
 
+            try:
+                self.db_path_dbname = Path(db_name_path)
+                if self.db_path_dbname.suffix != '.db': 
+                    self.db_path_dbname = self.db_path_dbname.with_suffix('.db')
+                self.db_dir = self.db_path_dbname.parent
+                self.db_name = self.db_path_dbname.stem
 
-            self.db_path_dbname = Path(path_dbname)
-            if self.db_path_dbname.suffix != '.db': 
-                self.db_path_dbname = self.db_path_dbname.with_suffix('.db')
-            self.db_dir = self.db_path_dbname.parent
-            self.db_name = self.db_path_dbname.stem
+                if data_location is None: data_location = []
+                if isinstance(data_location, (str,Path)): data_location = [data_location]
+                self.source_locations = [Path(dir) for dir in data_location]
+            except Exception as e:
+                raise Exception("Issue with class attribute creation: ", e)
 
-            if data_location is None: data_location = []
-            if isinstance(data_location, (str,Path)): data_location = [data_location]
-            self.source_locations = [Path(dir) for dir in data_location]
-
-            self.con, self.cursor = self._create_database(self.db_name)
-
+            try:
+                self.con, self.cursor = self._create_database(self.db_path_dbname)
+            except Exception as e:
+                raise Exception("Database could not be created due to exception: ", e)
+            
             if self.source_locations:
-                data = {}
-                for file in self.source_locations:
-                    file_path = Path(file)
-                    data.update(self.read_tabular_data(file_path.absolute()))
-                self.add_data(data)
+                try:
+                    self.add_data(data_path=self.source_locations, if_exists='fail')
+                    self.con.commit()
+                except Exception as e:
+                    self.con.rollback()
+                    self._clear_db()
+                    raise Exception("Database Removed. Data not added to database due to exception: ", e)
 
-    def _create_database(self, db_name:str):
+    def _create_database(self, db_name:str) -> tuple:
         """
         Creates a SQLite database with the given name.
 
@@ -84,6 +91,9 @@ class XLDB:
         Returns:
             tuple: A tuple containing the connection and cursor objects.
         """
+        if Path.exists(db_name):
+            raise Exception("Database already exists")
+
         try:
             con = sqlite3.connect(db_name)
             cur = con.cursor()
@@ -91,7 +101,7 @@ class XLDB:
         except Exception as e:
             raise Exception("Database not created due to exception: ", e)
 
-    def _clear_db(self):
+    def _clear_db(self) -> None:
         """
         Clears the database by closing the connection and deleting the database file.
         """
@@ -100,6 +110,81 @@ class XLDB:
             Path(self.db_path_dbname).unlink()
         except Exception as e:
             raise Exception("Database not deleted due to exception: ", e)
+
+    def _parse_csv(self, file_path:Path, **kwargs) -> dict:
+        """
+        Parse a CSV file to a pandas DataFrame.
+
+        Args:
+            file_path (Path): The path to the CSV file.
+
+        Returns:
+            dictionary: A dictionary of the file name and pandas DataFrame containing the data from the file.
+
+        Raises:
+            Exception: If an error occurs during the parsing process.
+        """
+        try:
+            data = pd.read_csv(file_path, **kwargs)
+            return {file_path.stem: data}
+        except Exception as e:
+            raise Exception("CSV was unable to be read: ", e)
+
+    def _parse_excel(self, file_path:Path, **kwargs) -> dict:
+        """
+        Parse an Excel file to a pandas DataFrame.
+
+        Args:
+            file_path (Path): The path to the Excel file.
+
+        Returns:
+            dictionary: A dictionary of the sheet name and pandas DataFrame containing the data from the file.
+
+        Raises:
+            Exception: If an error occurs during the parsing process.
+        """
+        try:
+            with pd.ExcelFile(file_path) as xls:
+                sheet_names = xls.sheet_names
+                data = {sheet_name: pd.read_excel(file_path, sheet_name, **kwargs) for sheet_name in sheet_names}
+                return data
+        except Exception as e:
+            raise Exception("Excel file was unable to be read: ", e)
+                                                        
+    def _parse_to_pd(self, file_path:Path, **kwargs) -> dict:
+        """
+        Parse the file to a pandas DataFrame.
+
+        Args:
+            file_path (Path): The path to the file.
+
+        Returns:
+            dictionary: A dictionary of the file or sheet name and pandas DataFrame containing the data from the file.
+
+        Raises:
+            Exception: If the file format is not supported.
+        """
+
+        supported_formats = {'.csv':  self._parse_csv, 
+                             '.xls':  self._parse_excel,
+                             '.xlsx': self._parse_excel}
+
+        try:
+            file_path = Path(file_path)
+        except:
+            raise TypeError("File path should be a Path object or able to convert to a Path Object")
+
+        if not file_path.suffix in supported_formats:
+            raise Exception(f'File format not supported, please provide a file of the supported types: {supported_formats.keys()}')
+        if not file_path.exists():
+            raise Exception('File does not exist, please provide a valid file path.')
+        
+        try:
+            func = supported_formats[file_path.suffix]
+            return func(file_path, **kwargs)
+
+        except Exception as e:
+            raise Exception("Data not read due to exception: ", e)
 
     def read_tabular_data(self, file_path, **kwargs) -> dict:
         """
@@ -141,7 +226,7 @@ class XLDB:
         except Exception as e:
             raise Exception("Data not read due to exception: ", e)        
 
-    def _fetch_tables(self):
+    def _fetch_tables(self) -> list:
         """
         Fetches the names of all tables in the SQLite database.
 
@@ -158,7 +243,7 @@ class XLDB:
             self.con.rollback()
             raise Exception("Tables not fetched due to exception: ", e)
 
-    def _fetch_columns(self, table_name:str):
+    def _fetch_columns(self, table_name:str) -> list:
         """
         Fetches the column names of a given table.
 
@@ -179,7 +264,7 @@ class XLDB:
             self.con.rollback()
             raise Exception("Columns not fetched due to exception: ", e)
 
-    def _fetch_data(self, table_name:str):
+    def _fetch_data(self, table_name:str) -> pd.DataFrame: 
         """
         Fetches all data from the specified table and returns it as a pandas DataFrame.
 
@@ -204,7 +289,7 @@ class XLDB:
             self.con.rollback()
             raise Exception("Data not fetched due to exception: ", e)
 
-    def to_csv(self, dir:str=None, exclude:list=[], include_db_name:bool = True, close_delete:bool = True, **kwargs):
+    def to_csv(self, dir:str=None, exclude:list=[], include_db_name:bool = True, close_delete:bool = True, **kwargs) -> None:
         """
         Export the data from the database tables to CSV files.
 
@@ -250,7 +335,7 @@ class XLDB:
         except Exception as e:
             raise Exception("Data not written to csv files due to exception: ", e)
 
-    def to_excel(self, dir:str=None, exclude:list=[], file_name:str = None, close_delete:bool = True, **kwargs):
+    def to_excel(self, dir:str=None, exclude:list=[], file_name:str = None, close_delete:bool = True, **kwargs) -> None:
         """
         Export the data from the database to an Excel file.
 
@@ -294,40 +379,68 @@ class XLDB:
         
         except Exception as e:
             raise Exception("Data not written to excel file due to exception: ", e)
+        
+    def add_data(self, data_path: Union[str, Path, list], if_exists='fail', map: dict = None, **kwargs) -> None:
 
-    def _append_data(self, table_name:str, data:pd.DataFrame):
-        """
-        Append data to a specified table in the database.
+        # need to differentiate between add and append.
 
-        Args:
-            table_name (str): The name of the target table.
-            data (pd.DataFrame): The data to be appended, represented as a pandas DataFrame.
 
-        Raises:
-            Exception: If the columns in the data do not match the columns in the target table.
+        if data_path and (not all(isinstance(data, (str, Path)) for data in data_path)):
+            raise TypeError("All data elements should be strings or Path objects")
+        check_if_exists = ['fail', 'replace', 'append']
+        if not if_exists in check_if_exists:
+            raise TypeError(f"if_exists argument should be one of {check_if_exists}")
 
-        Returns:
-            None
-        """
+
         try:
-            target_cols = self._fetch_columns(table_name)
+            # package data_path(s) and add to source_locations
+            
 
-            if not all(col in target_cols for col in data.columns):
-                raise Exception(f"Columns do not match target table '{table_name}'. Non-matching columns: ", [col in data.columns if col not in target_cols else ''])
+            # This isn't quite working the right way.
+            print(data_path)
+            if isinstance(data_path, (str,Path)): 
+                data_path = [data_path]
+                print("invoked list embedding")
+            print(self.source_locations)
+            # Only need to do this is the file is not already in the source_locations
+            #self.source_locations.extend([Path(dir) for dir in data_path])
+            print(self.source_locations)
 
-            data = data[target_cols]
+            print("Add Data Checkpoint 1")
+            print('*'*50)   
+            
+            print(data_path)
+            for file in data_path:
+                data_dict = self._parse_to_pd(file, **kwargs)
+                table_name = list(data_dict.keys())[0]
+                df = list(data_dict.values())[0]
 
-            add_data = f"INSERT INTO {table_name} VALUES({', '.join(['?']*len(target_cols))})"
+                # rename columns if map exists
+                if map and (table_name in map):
+                    columns = [map[table_name].get(col, col) for col in df.columns]
+                    df = df[columns]
 
-            self.cursor.executemany(add_data, [tuple(row) for row in data.values])
+                try:
+                    df.to_sql(table_name, self.con, if_exists=if_exists, index=False)
+                    self.con.commit()
+                except Exception as e:
+                    self.con.rollback()
+                    raise Exception("Table not written to database due to exception: ", e)
+
             self.con.commit()
 
         except Exception as e:
             self.con.rollback()
             raise Exception("Data not written to database due to exception: ", e)
-        
-    def add_data(self, data: dict, overwrite: bool = False, map: dict = None):
+            
+
+        pass
+
+    def old_add_data(self, data: dict, overwrite: bool = False, map: dict = None) -> None:
         """
+
+        PRESERVING THIS FOR MY EMBARASEMENT AT NOT HAVING READ THE df.to_sql DOCS
+
         Add data to the database.
 
         Args:
@@ -378,8 +491,28 @@ class XLDB:
                 
                 if not all(col in target_cols for col in columns):
                     raise Exception(f"Columns do not match target table '{table_name}'. Try using the map argument or renaming dataframes. Non-matching columns: ", [col in columns if col not in target_cols else ''])
+                
 
-                self._append_data(table_name, df)
+                try:
+                    target_cols = self._fetch_columns(table_name)
+
+                    #if not all(col in target_cols for col in data.columns):
+                    if not set(data.columns) == set(target_cols):
+                        raise Exception(f"Columns do not match target table '{table_name}'. Non-matching columns: ", [col in data.columns if col not in target_cols else ''])
+
+                    data = data[target_cols]
+
+                    add_data = f"INSERT INTO {table_name} VALUES({', '.join(['?']*len(target_cols))})"
+
+                    self.cursor.executemany(add_data, [tuple(row) for row in data.values])
+                    self.con.commit()
+
+                except Exception as e:
+                    self.con.rollback()
+                    raise Exception("Data not written to database due to exception: ", e)
+
+
+
 
             self.con.commit()  
 
@@ -387,7 +520,7 @@ class XLDB:
             self.con.rollback()
             raise Exception("Data not written to database due to exception: ", e)
         
-    def query(self, query:str):
+    def query(self, query:str) -> list:
         """
         Executes the given SQL query and returns the result.
 
@@ -414,40 +547,28 @@ class XLDB:
 
 if __name__ == '__main__':
 
-    db = XLDB(path_dbname='csv_test_db')
-    data = db.read_tabular_data(Path('test_csv.csv'))
-    db.add_data(data)
+    #db = XLDB(db_name_path='csv_test_db', data_location=['test_csv.csv'])
+    db = XLDB(db_name_path='xlsx_test_db', data_location=['test_xlsx.xlsx'])
+
     #print(db.query("SELECT * FROM test_csv limit 10"))
-    #db.to_csv()
+    print(db.query("SELECT * FROM users limit 10"))
+    db.to_csv()
     
     #db = XLDB('xlsx_test_db')
     #db = XLDB('simple_xlsx_test_db')
-    #data = db.read_tabular_data(Path('test_xlsx.xlsx'))
-    #data = db.read_tabular_data(Path('simple_test_xlsx.xlsx'))
     #db.add_data(data)
     #db.to_excel()
 
 
-
-
-    # [X] rewrite __init__
-    # [x] read csv/xls/xlsx file
-    # [x] get the sheet/table names and data types
-    # [x] create a database
-    # [x] write data to the database
-    # [x] return the database object.
-    # [x] append additional data. NEEDs overwrite control. Data types control. column matching
-    # [x] execute arbitrary queries
-    # [x] write data back to a file
-    # [X] Fix bad types in xlsx
-
 # https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.to_sql.html 
 
     # Polishing:
-    # [] Redo tabluar data reading
+    # [X] Redo tabluar data reading
     # [X] Make sure I am commiting after every write
     # [X] Try and except catches
     # [X] Type checks
     # [X] replace prints with raises
     # [?] abstract some of the query logic
-    # [] table and column name validation
+    # [X] table and column name validation
+    # [] Flow to add vs append data
+    # [X] saving db to location doesn't work.
