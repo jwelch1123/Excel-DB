@@ -1,4 +1,4 @@
-# Excel-DB
+# XLDB
 What if Excel ***was*** a database
 
 ## Features
@@ -7,7 +7,11 @@ What if Excel ***was*** a database
 
 
 ## Getting Started
-- Copy the repository to your project directory.
+- Clone this repository to your local machine in your workspace. 
+
+  `git clone https://github.com/jwelch1123/xldb`
+
+- Copy the xldb.py file into your workspace or add the xldb repo to your python path.
 - Use `from xldb import XLDB` to bring the module into your project.
 
 ## Usage
@@ -36,9 +40,8 @@ What if Excel ***was*** a database
   - My previous manager used the phrase "Excel isn't a Database" so many times I started to wonder if you could.
 - Doesn't Pandas provide a DataFrame.to_sql method?
   - Yes, but I found that out after I was almost done. It doesn't do exactly the same thing...
-- What would you do differently?
-  - Fully read the Pandas and SQLite documentation before starting.
+
 
 ## Acknowledgements
 - Thank you Kelly Raymond for your mentorship and guidance. 
-- Thanks to [code camp for providing a guide](https://www.freecodecamp.org/news/build-your-first-python-package/) to setting up a package version of this project. As well as [Arjan codes](https://www.youtube.com/watch?v=5KEObONUkik) for the video tutorial on the same topic.
+- Thanks to [code camp for providing a guide to build packages](https://www.freecodecamp.org/news/build-your-first-python-package/). As well as [Arjan codes](https://www.youtube.com/watch?v=5KEObONUkik) for the video tutorial convincing me it wasn't worth it. 
