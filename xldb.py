@@ -1,33 +1,39 @@
 import sqlite3
 from pathlib import Path
 import pandas as pd
-from typing import Union
+from typing import Union # only needed on python below 3.10
 
 
 class XLDB:
-    """
-    A class for creating a SQLite database from XLSX or CSV files and performing operations on it.
+    '''
+    The XLDB class is a class that allows the import of data from CSV and Excel files into a SQLite database.
+    Manipulation of that data using SQL and exporting the data back to CSV or Excel files.
 
     Attributes:
-        db_path_dbname (Path): The path to the database file.
-        db_dir (str): The directory where the database file is located.
-        db_name (str): The name of the database file.
-        source_locations (list): A list of paths to data files.
-        con (sqlite3.Connection): The connection object for the SQLite database.
-        cursor (sqlite3.Cursor): The cursor object for executing SQL queries.
+    - db_path_dbname: The path to the database file.
+    - db_dir: The directory where the database file is located.
+    - db_name: The name of the database file.
+    - source_locations: The location(s) of the data file(s).
+    - con: The connection object to the database.
+    - cursor: The cursor object to the database.
 
     Methods:
-        __init__: Initializes the XLDB object.
-        _create_database: Creates a SQLite database with the given name.
-        _clear_db: Clears the database by closing the connection and deleting the database file.
-        read_tabular_data: Reads tabular data from a file.
-        _fetch_tables: Fetches the names of all tables in the SQLite database.
-        _fetch_columns: Fetches the column names of a given table.
-        _fetch_data: Fetches all data from the specified table and returns it as a pandas DataFrame.
-        to_csv: Writes the data from the database tables to CSV files.
-        to_excel: Writes the data from the database tables to an Excel file.
-        add_data: Adds data to the database tables.
-    """
+    - __init__: Initializes the XLDB object.
+    - _create_database: Creates a SQLite database with the given name.
+    - _clear_db: Clears the database by closing the connection and deleting the database file.
+    - _parse_csv: Parse a CSV file to a pandas DataFrame.
+    - _parse_excel: Parse an Excel file to a pandas DataFrame.
+    - _parse_to_pd: Parse the file to a pandas DataFrame.
+    - _fetch_tables: Fetches the names of all tables in the SQLite database.
+    - _fetch_columns: Fetches the column names of a given table.
+    - _fetch_data: Fetches all data from the specified table and returns it as a pandas DataFrame.
+    - to_csv: Export the data from the database tables to CSV files.
+    - to_excel: Export the data from the database to an Excel file.
+    - add_data: Add data to the database.
+    - append_data: Appends data to the XLDB.
+    - query: Executes the given SQL query and returns the results. 
+    
+    '''
 
     db_path_dbname = Path
     db_dir = str
@@ -185,46 +191,6 @@ class XLDB:
 
         except Exception as e:
             raise Exception("Data not read due to exception: ", e)
-
-    def read_tabular_data(self, file_path, **kwargs) -> dict:
-        """
-        Read tabular data from a file.
-
-        Args:
-            file_path (str): The path to the file.
-            **kwargs: Additional keyword arguments to be passed to the pandas read_csv or read_excel function.
-
-        Returns:
-            dict: A dictionary containing the tabular data. The keys are the sheet names (for Excel files) or the file name (for CSV files),
-                  and the values are pandas DataFrames representing the data.
-
-        Raises:
-            Exception: If the file format is not supported.
-
-        """
-        
-        if not isinstance(file_path, Path):
-            raise TypeError("File path should be a Path object")
-        
-        try:
-            if file_path.suffix == '.csv':
-                data = {file_path.stem: pd.read_csv(file_path, **kwargs)}
-            elif (file_path.suffix == '.xls') or (file_path.suffix == '.xlsx'):
-                with pd.ExcelFile(file_path) as xls:
-                    sheet_names = xls.sheet_names
-                    data = {sheet_name: pd.read_excel(file_path, sheet_name, **kwargs) for sheet_name in sheet_names}
-            else:
-                raise Exception('File format not supported')
-            
-            for key, value in data.items():
-                datetime_cols = value.select_dtypes(include=['datetime']).columns
-                for col in datetime_cols:
-                    value[col] = value[col].dt.strftime('%Y-%m-%d %H:%M:%S')
-                data[key] = value
-
-            return data
-        except Exception as e:
-            raise Exception("Data not read due to exception: ", e)        
 
     def _fetch_tables(self) -> list:
         """
@@ -447,90 +413,6 @@ class XLDB:
         - None
         """
         self.add_data(data_path, if_exists='append')
-
-    def old_add_data(self, data: dict, overwrite: bool = False, map: dict = None) -> None:
-        """
-
-        PRESERVING THIS FOR MY EMBARASEMENT AT NOT HAVING READ THE df.to_sql DOCS
-
-        Add data to the database.
-
-        Args:
-            data (dict): A dictionary containing the data to be added. The keys should be table names and the values should be Pandas DataFrames.
-            overwrite (bool, optional): If True, existing tables will be dropped and recreated. Defaults to False.
-            map (dict, optional): A dictionary with table names as keys and a data column: sql column dictionary as values. Defaults to None.
-
-        Raises:
-            TypeError: If the data argument is not a dictionary, if the keys are not strings, if the values are not Pandas DataFrames, if the overwrite argument is not a boolean, or if the map argument is not a dictionary.
-            Exception: If the columns in the data do not match the columns in the target table.
-
-        Returns:
-            None
-        """
-
-        if not isinstance(data, dict):
-            raise TypeError("Data argument should be a dictionary")
-        if not all(isinstance(key, str) for key in data.keys()):
-            raise TypeError("All keys should be strings")
-        if not all(isinstance(value, pd.DataFrame) for value in data.values()):
-            raise TypeError("All dictionary values should be Pandas DataFrames")
-        if not isinstance(overwrite, bool):
-            raise TypeError("Overwrite argument should be a boolean")
-        if map and (not isinstance(map, dict)):
-            raise TypeError("Map argument should be a dictionary with table names as keys and a data column: sql column dictionary as values")
-
-        tables = self._fetch_tables()
-
-        try:
-            for table_name, df in data.items():
-
-                if map and (table_name in map):
-                    columns = [map[table_name].get(col, col) for col in df.columns]
-                    cols = ', '.join(columns)
-                else:
-                    columns = df.columns
-                    cols = ', '.join(columns)
-
-                if table_name in tables:
-                    if overwrite:
-                        self.cursor.execute(f"DROP TABLE IF EXISTS {table_name}")     
-                        create_table = f'CREATE TABLE {table_name}({cols})'               
-                else:
-                    create_table = f'CREATE TABLE {table_name}({cols})'
-                    self.cursor.execute(create_table)
-                
-                target_cols = self._fetch_columns(table_name)
-                
-                if not all(col in target_cols for col in columns):
-                    raise Exception(f"Columns do not match target table '{table_name}'. Try using the map argument or renaming dataframes. Non-matching columns: ", [col in columns if col not in target_cols else ''])
-                
-
-                try:
-                    target_cols = self._fetch_columns(table_name)
-
-                    #if not all(col in target_cols for col in data.columns):
-                    if not set(data.columns) == set(target_cols):
-                        raise Exception(f"Columns do not match target table '{table_name}'. Non-matching columns: ", [col in data.columns if col not in target_cols else ''])
-
-                    data = data[target_cols]
-
-                    add_data = f"INSERT INTO {table_name} VALUES({', '.join(['?']*len(target_cols))})"
-
-                    self.cursor.executemany(add_data, [tuple(row) for row in data.values])
-                    self.con.commit()
-
-                except Exception as e:
-                    self.con.rollback()
-                    raise Exception("Data not written to database due to exception: ", e)
-
-
-
-
-            self.con.commit()  
-
-        except Exception as e:
-            self.con.rollback()
-            raise Exception("Data not written to database due to exception: ", e)
         
     def query(self, query:str) -> list:
         """
@@ -556,9 +438,4 @@ class XLDB:
         except Exception as e:
             self.con.rollback()            
             raise Exception("Query failed: ", e)
-
-if __name__ == '__main__':
-
-    #db = XLDB(db_name_path='csv_test_db', data_location=['test_csv.csv'])
-    db = XLDB(db_name_path='xlsx_test_db', data_location=['test_xlsx.xlsx'])
-    # [] Strip Read Tabular data and Old add data functions
+        

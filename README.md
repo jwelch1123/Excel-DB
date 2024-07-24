@@ -4,7 +4,7 @@ What if Excel ***was*** a database
 ## Features
 - **Seamless Integration with Excel and CSV Files:** Easily create SQLite databases from your existing Excel and CSV files.
 - **Comprehensive Data Manipulation:** Read, append, and export data with ease.
-- **Pandas Compatibility:** Leverage the power of pandas for efficient data handling and manipulation, making it easier to 
+
 
 ## Getting Started
 - Copy the repository to your project directory.
@@ -41,4 +41,4 @@ What if Excel ***was*** a database
 
 ## Acknowledgements
 - Thank you Kelly Raymond for your mentorship and guidance. 
-- Thanks to [code camp for providing a guide](https://www.freecodecamp.org/news/build-your-first-python-package/) to setting up a package version of this project.
+- Thanks to [code camp for providing a guide](https://www.freecodecamp.org/news/build-your-first-python-package/) to setting up a package version of this project. As well as [Arjan codes](https://www.youtube.com/watch?v=5KEObONUkik) for the video tutorial on the same topic.
